@@ -1,0 +1,442 @@
+---
+title: "Mediation CRP Analysis"
+author: "César Higgins"
+date: '2023-01-19'
+output:
+  html_document: null
+  highlight: pygments
+  word_document: default
+  keep_md: no
+  number_sections: yes
+  smart: yes
+  theme: sandstone
+  toc: yes
+  toc_float: yes
+  code_folding: hide
+---
+
+
+```{r, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(compareGroups)
+library(knitr)
+library(kableExtra)
+library(janitor)
+library(broom)
+library(lubridate)
+library(magrittr) # need to run every time you start R and want to use %>%
+library(kableExtra)
+library(gtsummary)
+library(foreign)
+library(gmodels)
+library(stringr)
+library(dplyr)  
+library(haven)
+
+summarize = dplyr::summarize
+
+knitr::opts_chunk$set(
+  eval       = TRUE,    # whether to run code in code chunk
+  include    = TRUE,    # whether to include the chunk output
+  echo       = TRUE,   # Whether to show code chunk in final output
+  error      = TRUE,    # whether to display error messages
+  message    = FALSE,   # whether to preserve messages
+  warning    = FALSE,   # whether to preserve warnings
+  comment    = "#>",    # a character string to append at start
+                        # of each line of results in final document
+  tidy       = FALSE,   # whether to tidy code chunks for display
+  #dpi        = 96, 
+  #fig.width  = 6,       # consistent width for figures
+  #fig.asp    = 0.618,   # the golden ratio, can be adjusted in individual chunks
+  out.width  = "100%",   # controls the output size
+  fig.align  = "center" # give plot room to breathe
+)
+
+```
+
+
+
+
+# Mediation 
+
+```{r}
+
+library(haven)
+# import data from stata for mediation analysis
+rm(list = ls())
+source_dir_dta <- "/Users/cesarhiggins/Documents/Race_CRP_Dementia/STATA/"
+dementia_incidence_6y <- read_dta(paste0(source_dir_dta, "crp_data_incidence_mediation.dta")) # file with analytic sample size
+
+
+library(CMAverse)
+
+```
+
+
+```{r, results='hide'}
+
+library(writexl)
+source_dir_data <- "/Users/cesarhiggins/Documents/Race_CRP_Dementia/Mediation Results/"
+
+# function to extract decomposition components 
+# Link to existing files for function use
+source(paste0(source_dir_data, "extract_decompo.R"))
+source(paste0(source_dir_data, "extract_evalue.R"))
+
+```
+
+
+
+# Black Models
+
+```{r, results='hide'}
+
+black_data <- dementia_incidence_6y %>% select(dementia, black, baseline_crp_75, wave, APOE2010_bin, z_age, sex, edu_cat_1, edu_cat_2, z_bmi, z_alcohol, smoke, chronic, ln_time) %>% na.omit()
+
+
+
+# Regression Based Approach
+set.seed(2021)
+res_rb_b <- cmest(data = black_data, model = "rb", outcome = "dementia", exposure = "black",
+                mediator = c("baseline_crp_75"), basec = c("wave", "APOE2010_bin", "z_age", "sex", "edu_cat_1", "edu_cat_2" , "z_bmi", "z_alcohol", "smoke", "chronic", "ln_time"), EMint=TRUE,
+                mreg = list(glm(baseline_crp_75 ~ black + wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, family = binomial(link = "logit"), data = black_data)), yreg = glm(dementia ~ black + baseline_crp_75 + black*baseline_crp_75+ wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, offset = ln_time, family = poisson(link = "log"), data=black_data),
+                astar = 0, a = 1, mval = list(0), basecval = list(2006, 0, 0, 2, 0, 0, 0, 0, 0, 0), yval = list(0), estimation = "imputation", inference = "bootstrap", nboot = 1000, multimp = FALSE)
+
+
+
+# G estimation L approach 
+
+set.seed(2021)
+res_gformula_b_l <- cmest(data = black_data, model = "gformula", outcome = "dementia", exposure = "black",
+                      mediator = c("baseline_crp_75"), basec = c("wave", "z_age", "sex", "edu_cat_1", "edu_cat_2" , "z_bmi", "z_alcohol", "smoke", "chronic", "ln_time"), postc= "APOE2010_bin", EMint = TRUE,
+                      mreg = list(glm(baseline_crp_75 ~ black + wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, family = binomial(link = "logit"), data = black_data)), yreg = glm(dementia ~ black + baseline_crp_75 + black*baseline_crp_75+ wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, , offset = ln_time, family = poisson(link = "log"), data=black_data),  postcreg = list(glm(APOE2010_bin ~ black + wave + z_age + sex + edu_cat_1 + 
+    edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, family = binomial(link = "logit"), data = black_data)),
+                      astar = 0, a = 1, mval = list(0), basecval = list(2006, 0, 2, 0, 0, 0, 0, 0, 0), yval=list(0),
+                     estimation = "imputation", inference = "bootstrap", nboot = 1000)
+
+
+
+
+```
+
+## hsCRP Mediation Incident Dementia Blacks Models{.tabset}
+
+
+### Regression Based 
+
+```{r}
+
+summary(res_rb_b)
+
+result_black_crp_rb = extract_decompo(res_rb_b)
+
+ggcmest(res_rb_b) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, vjust = 0.8))
+
+evalue_rb <- cmsens(res_rb_b, sens = "uc",   MEmethod = "simex", MEvariable = NULL, MEvartype = NULL, MEerror = NULL, lambda = c(0.5, 1, 1.5, 2), B = 200, nboot.rc = 1000)
+
+print(evalue_rb)
+
+```
+
+
+### Sensitivity G Method 
+
+```{r}
+
+summary(res_gformula_b_l)
+
+result_black_crp_gformula_l = extract_decompo(res_gformula_b_l)
+
+ggcmest(res_gformula_b_l) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, vjust = 0.8))
+
+
+evalue_gformula_b_l <- cmsens(res_gformula_b_l, sens = "uc",   MEmethod = "simex", MEvariable = NULL, MEvartype = NULL, MEerror = NULL, lambda = c(0.5, 1, 1.5, 2), B = 200, nboot.rc = 1000)
+
+print(evalue_gformula_b_l)
+
+
+```
+
+
+# Hispanic Models
+
+
+```{r, results='hide'}
+
+hispanic_data <- dementia_incidence_6y %>% select(dementia, hispanic, baseline_crp_75, wave, APOE2010_bin, z_age, sex, edu_cat_1, edu_cat_2, z_bmi, z_alcohol, smoke, chronic, ln_time) %>% na.omit()
+
+set.seed(2021)
+
+# Regression Based Approach
+
+res_rb_h <- cmest(data = hispanic_data, model = "rb", outcome = "dementia", exposure = "hispanic",
+                mediator = c("baseline_crp_75"), basec = c("wave", "APOE2010_bin", "z_age", "sex", "edu_cat_1", "edu_cat_2" , "z_bmi", "z_alcohol", "smoke", "chronic", "ln_time"), EMint = TRUE,
+                mreg = list("logistic"), yreg = glm(dementia ~ hispanic + baseline_crp_75 + hispanic*baseline_crp_75+ wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, , offset = ln_time, family = poisson(link = "log"), data=hispanic_data),
+                astar = 0, a = 1, mval = list(0), basecval = list(2006, 0, 0, 2, 0, 0, 0, 0, 0, 0), yval = list(0), estimation = "imputation", inference = "bootstrap", nboot = 1000, multimp = FALSE)
+
+
+# G estimation L approach 
+
+set.seed(2021)
+res_gformula_h_l <- cmest(data = hispanic_data, model = "gformula", outcome = "dementia", exposure = "hispanic",
+                      mediator = c("baseline_crp_75"), basec = c("wave", "z_age", "sex", "edu_cat_1", "edu_cat_2" , "z_bmi", "z_alcohol", "smoke", "chronic", "ln_time"), postc= "APOE2010_bin", EMint = TRUE,
+                      mreg = list("logistic"), yreg = glm(dementia ~ hispanic + baseline_crp_75 + hispanic*baseline_crp_75 + wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, , offset = ln_time, family = poisson(link = "log"), data=hispanic_data),  postcreg = list(glm(APOE2010_bin ~ hispanic + wave + z_age + sex + edu_cat_1 + 
+    edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, family = binomial(link = "logit"), data = hispanic_data)),
+                      astar = 0, a = 1, mval = list(0), basecval = list(2006, 0, 2, 0, 0, 0, 0, 0, 0), yval=list(0),
+                     estimation = "imputation", inference = "bootstrap", nboot = 1000)
+
+
+```
+
+
+## hsCRP Mediation Incident Dementia Hispanic Models{.tabset}
+
+
+
+### Regression Based 
+
+
+```{r}
+
+summary(res_rb_h)
+
+result_hispanic_crp_rb = extract_decompo(res_rb_h)
+
+ggcmest(res_rb_h) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, vjust = 0.8))
+
+
+
+evalue_rb_h <- cmsens(res_rb_h, sens = "uc",   MEmethod = "simex", MEvariable = NULL, MEvartype = NULL, MEerror = NULL, lambda = c(0.5, 1, 1.5, 2), B = 200, nboot.rc = 1000)
+
+print(evalue_rb_h)
+
+```
+
+
+
+### Sensitivity G Method 
+
+```{r}
+
+summary(res_gformula_h_l)
+
+result_hispanic_crp_gformula_l = extract_decompo(res_gformula_h_l)
+
+ggcmest(res_gformula_h_l) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, vjust = 0.8))
+
+evalue_gformula_h_l <- cmsens(res_gformula_h_l, sens = "uc",   MEmethod = "simex", MEvariable = NULL, MEvartype = NULL, MEerror = NULL, lambda = c(0.5, 1, 1.5, 2), B = 200, nboot.rc = 1000)
+
+print(evalue_gformula_h_l)
+
+```
+
+
+# Minoritized Models 
+
+
+```{r, results='hide'}
+
+minority_data <- dementia_incidence_6y %>% select(dementia, minority, baseline_crp_75, wave, APOE2010_bin, z_age, sex, edu_cat_1, edu_cat_2, z_bmi, z_alcohol, smoke, chronic, ln_time) %>% na.omit()
+
+
+
+# Regression Based Approach
+set.seed(2021)
+res_rb_m <- cmest(data = minority_data, model = "rb", outcome = "dementia", exposure = "minority",
+                mediator = c("baseline_crp_75"), basec = c("wave", "APOE2010_bin", "z_age", "sex", "edu_cat_1", "edu_cat_2" , "z_bmi", "z_alcohol", "smoke", "chronic", "ln_time"), EMint = TRUE,
+                mreg = list("logistic"), yreg = glm(dementia ~ minority + baseline_crp_75 + minority*baseline_crp_75+ wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, , offset = ln_time, family = poisson(link = "log"), data=minority_data),
+                astar = 0, a = 1, mval = list(0), basecval = list(2006, 0, 0, 2, 0, 0, 0, 0, 0, 0), yval = list(0), estimation = "imputation", inference = "bootstrap", nboot = 1000, multimp = FALSE)
+
+
+
+# G estimation L approach 
+
+set.seed(2021)
+res_gformula_m_l <- cmest(data = minority_data, model = "gformula", outcome = "dementia", exposure = "minority",
+                      mediator = c("baseline_crp_75"), basec = c("wave", "z_age", "sex", "edu_cat_1", "edu_cat_2" , "z_bmi", "z_alcohol", "smoke", "chronic", "ln_time"), postc= "APOE2010_bin", EMint = TRUE,
+                      mreg = list("logistic"), yreg = glm(dementia ~ minority + baseline_crp_75 + minority*baseline_crp_75 + wave + APOE2010_bin + z_age + sex + edu_cat_1 + edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, , offset = ln_time, family = poisson(link = "log"), data=minority_data),  postcreg = list(glm(APOE2010_bin ~ minority + wave + z_age + sex + edu_cat_1 + 
+    edu_cat_2 + z_bmi + z_alcohol + smoke + chronic, family = binomial(link = "logit"), data = minority_data)),
+                      astar = 0, a = 1, mval = list(0), basecval = list(2006, 0, 2, 0, 0, 0, 0, 0, 0), yval=list(0),
+                     estimation = "imputation", inference = "bootstrap", nboot = 1000)
+
+```
+
+
+## hsCRP Mediation Incident Dementia Minority Models{.tabset}
+
+### Regression Based 
+
+```{r}
+
+summary(res_rb_m)
+
+result_minority_crp_rb = extract_decompo(res_rb_m)
+
+ggcmest(res_rb_m) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, vjust = 0.8))
+
+
+evalue_rb_m <- cmsens(res_rb_m, sens = "uc",   MEmethod = "simex", MEvariable = NULL, MEvartype = NULL, MEerror = NULL, lambda = c(0.5, 1, 1.5, 2), B = 200, nboot.rc = 1000)
+
+print(evalue_rb_m)
+
+```
+
+
+### Sensitivity G Method 
+
+```{r}
+
+summary(res_gformula_m_l)
+
+result_minority_crp_gformula_l = extract_decompo(res_gformula_m_l)
+
+ggcmest(res_gformula_m_l) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, vjust = 0.8))
+
+evalue_gformula_m_l <- cmsens(res_gformula_m_l, sens = "uc",   MEmethod = "simex", MEvariable = NULL, MEvartype = NULL, MEerror = NULL, lambda = c(0.5, 1, 1.5, 2), B = 200, nboot.rc = 1000)
+
+print(evalue_gformula_m_l)
+
+```
+
+
+# Table 3 & Supplemental Table 6
+
+
+Mediation analysis results for tables 3 and supplemental table 6
+
+```{r}
+
+# save single dementia incident models blacks and hispanics 
+single_mediation_dementia_black_crp = rbind(result_black_crp_rb, result_black_crp_gformula_l)
+single_mediation_dementia_hispanic_crp = rbind(result_hispanic_crp_rb, result_hispanic_crp_gformula_l)
+single_mediation_dementia_minority_crp = rbind(result_minority_crp_rb, result_minority_crp_gformula_l)
+sheets_IRR = list('single_med_dem_b' = single_mediation_dementia_black_crp, 'single_med_dem_h' = single_mediation_dementia_hispanic_crp, 'single_med_dem_m' = single_mediation_dementia_minority_crp)
+write_xlsx(sheets_IRR, path = paste0(source_dir_data, 'single_mediation_crp_2-10-23.xlsx'))
+
+
+
+```
+
+
+# Supplemental Table 7 
+
+```{r}
+
+result_evalue_black_rb = extract_evalue(evalue_rb)
+result_evalue_hispanic_rb = extract_evalue(evalue_rb_h)
+result_evalue_minority_rb = extract_evalue(evalue_rb_m)
+
+result_evalue_black_gf = extract_evalue(evalue_gformula_b_l)
+result_evalue_hispanic_gf = extract_evalue(evalue_gformula_h_l)
+result_evalue_minority_gf = extract_evalue(evalue_gformula_m_l)
+
+
+evalue_black = rbind(result_evalue_black_rb, result_evalue_black_gf)
+evalue_hispanic = rbind(result_evalue_hispanic_rb, result_evalue_hispanic_gf)
+evalue_minority = rbind(result_evalue_minority_rb, result_evalue_minority_gf)
+
+sheets_evalue = list('evalue_b' = evalue_black, 'evalue_h' = evalue_hispanic, 'evalue_m' = evalue_minority)
+write_xlsx(sheets_evalue, path = paste0(source_dir_data, 'evalue_crp_2-10-23.xlsx'))
+
+```
+
+
+
+# Supplemental Figure 3 
+
+Supplemental Figure 3: Plot of mediation analysis estimates from regression-based and randomized analogue models denoting percent of the racial disparity in incident dementia that is due to the mediating effect of C-reactive protein, the percent due to the interaction between exposure and mediator, and the proportion eliminated. A. Mediation estimates from the racial disparity between the minoritized racial group (non-Hispanic Black and Hispanic) vs the non-Hispanic White group. B. Mediation estimates from the racial disparity between the non-Hispanic Black vs the non-Hispanic White group. C. Mediation estimates from the racial disparity between the Hispanic group vs the non-Hispanic White group.
+
+
+
+```{r}
+
+library(ggplot2)
+library(ggpubr)
+theme_set(theme_pubr())
+
+library(readxl)
+estimates <- read_excel("/Users/cesarhiggins/Documents/CRP Dementia/Mediation Results/estimates.xlsx", "Black")
+  
+
+estimates_h <- read_excel("/Users/cesarhiggins/Documents/CRP Dementia/Mediation Results/estimates.xlsx", "Hispanic")
+
+
+estimates_m <- read_excel("/Users/cesarhiggins/Documents/CRP Dementia/Mediation Results/estimates.xlsx", "Minoritized")
+
+
+p_black <- ggplot(data=estimates,
+    aes(x = Effect,y = Estimate, ymin = Lower, ymax = Upper))+
+    geom_pointrange(aes(col=Effect))+
+    geom_hline(aes(fill=Effect),yintercept =c(0,1), linetype=2)+
+    ggtitle("Estimates (%) - non-Hispanic Black vs non-Hispanic White") +
+    xlab('Models')+ ylab("Effect Estimates (95% Confidence Interval)")+
+    geom_errorbar(aes(ymin=Lower, ymax=Upper,col=Effect),width=0.5,cex=1)+ 
+    facet_wrap(~Model,strip.position="left",nrow=6,scales = "free_y") +
+    theme(plot.title=element_text(size=16,face="bold"),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x=element_text(face="bold"),
+        axis.title=element_text(size=12,face="bold"),
+        strip.text.y = element_text(hjust=0,vjust = 1,angle=180,face="bold"))+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+   coord_flip() 
+
+p_black
+
+ 
+p_hispanic <- ggplot(data=estimates_h,
+    aes(x = Effect,y = Estimate, ymin = Lower, ymax = Upper))+
+    geom_pointrange(aes(col=Effect))+
+    geom_hline(aes(fill=Effect),yintercept =c(0,1), linetype=2)+
+    ggtitle("Estimates (%) - Hispanic vs non-Hispanic White") +
+    xlab('Models')+ ylab("Effect Estimates (95% Confidence Interval)")+
+    geom_errorbar(aes(ymin=Lower, ymax=Upper,col=Effect),width=0.5,cex=1)+ 
+    facet_wrap(~Model,strip.position="left",nrow=6,scales = "free_y") +
+    theme(plot.title=element_text(size=16,face="bold"),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x=element_text(face="bold"),
+        axis.title=element_text(size=12,face="bold"),
+        strip.text.y = element_text(hjust=0,vjust = 1,angle=180,face="bold"))+
+      scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    coord_flip()
+
+p_hispanic
+
+ 
+p_minoritized <- ggplot(data=estimates_m,
+    aes(x = Effect,y = Estimate, ymin = Lower, ymax = Upper))+
+    geom_pointrange(aes(col=Effect))+
+    geom_hline(aes(fill=Effect),yintercept =c(0,1), linetype=2)+
+    ggtitle("Estimates (%) - Minoritized vs non-Hispanic White") +
+    xlab('Models')+ ylab("Effect Estimates (95% Confidence Interval)")+
+    geom_errorbar(aes(ymin=Lower, ymax=Upper,col=Effect),width=0.5,cex=1)+ 
+    facet_wrap(~Model,strip.position="left",nrow=6,scales = "free_y") +
+    theme(plot.title=element_text(size=16,face="bold"),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x=element_text(face="bold"),
+        axis.title=element_text(size=12,face="bold"),
+        strip.text.y = element_text(hjust=0,vjust = 1,angle=180,face="bold"))+
+      scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    coord_flip()
+
+p_minoritized
+
+
+
+
+ p_b_h <- ggarrange(
+  p_minoritized, p_black, p_hispanic, labels = c("A", "B", "C"),
+  common.legend = TRUE, legend = "bottom"
+  )
+ 
+ p_b_h
+```
